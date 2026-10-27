@@ -1,0 +1,49 @@
+name: Test billetportal
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright==1.55.0
+      - run: python -m playwright install --with-deps chromium
+      - name: Kontrollér adgang og billetfilter
+        shell: bash
+        run: |
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page(locale='da-DK')
+              response = page.goto('https://billet.aarhusteater.dk/da/buyingflow/tickets/32837/', wait_until='domcontentloaded', timeout=45000)
+              print('HTTP-status:', response.status if response else 'intet svar', flush=True)
+              if not response or response.status != 200:
+                  raise RuntimeError('Billetsiden kunne ikke åbnes; testen afbrydes.')
+              print('Sidens titel:', page.title(), flush=True)
+              page.locator('#EventFilter').wait_for(timeout=30000)
+              if page.locator('a.ticket-types-inline-select').is_visible():
+                  page.locator('a.ticket-types-inline-select').click()
+              count = page.locator('#EventFilter .ticket-count')
+              count.wait_for(state='visible')
+              print('Billetantal før:', count.inner_text(), flush=True)
+              if count.get_attribute('data-value') != '2':
+                  page.locator('#EventFilter a[onclick*="filterPlus"]').click()
+              page.wait_for_function("document.querySelector('#EventFilter .ticket-count')?.getAttribute('data-value') === '2'", timeout=15000)
+              page.wait_for_timeout(5000)
+              print('Billetantal efter:', count.inner_text(), flush=True)
+              table = page.locator('#EventSelector')
+              print('Tabel synlig:', table.is_visible(), flush=True)
+              print('Tabeltekst:', table.inner_text()[:3000], flush=True)
+              print('Synlige rækker:', flush=True)
+              for row in table.locator('tr').all():
+                  if row.is_visible():
+                      print(repr(row.inner_text()), flush=True)
+              browser.close()
+          PY
